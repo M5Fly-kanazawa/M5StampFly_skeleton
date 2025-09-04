@@ -47,6 +47,28 @@ class PID {
     float update(float err, float h);
 };
 
+class PI_D {
+   private:
+    float m_kp;
+    float m_ti;
+    float m_td;
+    float m_eta;
+    float m_err, m_err2, m_err3;
+    float m_h;
+
+   public:
+    float m_differential;
+    float m_integral;
+    PI_D();
+    void set_parameter(float kp, float ti, float td, float eta, float h);
+    void reset(void);
+    void i_reset(void);
+    void printGain(void);
+    void set_error(float err);
+    float update(float ref, float y, float h);
+};
+
+
 class Filter {
    private:
     float m_state;

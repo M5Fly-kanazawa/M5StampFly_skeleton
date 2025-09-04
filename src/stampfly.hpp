@@ -59,6 +59,14 @@ typedef struct{
 }pidstruct_t;
 
 typedef struct{
+    PI_D thrust;
+    PI_D roll;
+    PI_D pitch;
+    PI_D yaw;    
+}pi_dstruct_t;
+
+
+typedef struct{
     float elapsed_time;
     float old_elapsed_time;
     float interval_time;
@@ -70,6 +78,7 @@ typedef struct{
     flag_t flag;
     counter_t counter;
     pidstruct_t pid;
+    pi_dstruct_t pi_d;
     control_ref_t ref;
     times_t times;
 }stampfly_t;

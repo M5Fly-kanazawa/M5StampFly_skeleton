@@ -209,9 +209,18 @@ void flight_mode(void) {
     float yaw_rate_error   = StampFly.ref.yaw   - StampFly.sensor.yaw_rate;
 
     //PID制御則
-    float delta_roll  = StampFly.pid.roll.update(roll_rate_error, StampFly.times.interval_time);
-    float delta_pitch = StampFly.pid.pitch.update(pitch_rate_error, StampFly.times.interval_time);
-    float delta_yaw   = StampFly.pid.yaw.update(yaw_rate_error, StampFly.times.interval_time);
+    float delta_roll  = StampFly.pid.roll.update(  
+        roll_rate_error, 
+        StampFly.times.interval_time);
+
+    float delta_pitch = StampFly.pid.pitch.update(
+        pitch_rate_error, 
+        StampFly.times.interval_time);
+    
+    float delta_yaw   = StampFly.pid.yaw.update(
+        yaw_rate_error, 
+        StampFly.times.interval_time);
+        StampFly.times.interval_time);
 
     //トリム調整（機体のアンバランスをキャンセルするためトリム値を加算）
     float trim_roll  = 0.01;
@@ -254,19 +263,21 @@ void parking_mode(void) {
     StampFly.counter.loop = 0;
     
     //PID Gain set
-    const float kp_roll  = 0.7527*1.1f;
-    const float kp_pitch = 1.0508*1.1f;
-    const float kp_yaw   = 5.3724*1.1f;
-    const float ti_roll  = 100.0f;
-    const float ti_pitch = 100.0f;
-    const float ti_yaw   = 100.0f;
-    const float td_roll  = 0.0005f;
-    const float td_pitch = 0.0005f;
-    const float td_yaw   = 0.0005f;
-    const float eta_roll  = 0.052f;
-    const float eta_pitch = 0.052f;
-    const float eta_yaw   = 0.052f;
-    const float h = 0.0025;
+    const float kp_roll  = 0.65f;
+    const float ti_roll  = 0.7f;
+    const float td_roll  = 0.01f;
+    const float eta_roll  = 0.125f;
+
+    const float kp_pitch = 0.95f;
+    const float ti_pitch = 0.7f;
+    const float td_pitch = 0.01f;
+    const float eta_pitch = 0.125f;
+
+    const float kp_yaw   = 3.0f;
+    const float ti_yaw   = 0.7f;
+    const float td_yaw   = 0.01f;
+    const float eta_yaw   = 0.125f;
+    const float h = 0.0025f;
 
     StampFly.pid.roll.set_parameter(  kp_roll,  ti_roll,  td_roll,  eta_roll,  h);
     StampFly.pid.pitch.set_parameter( kp_pitch, ti_pitch, td_pitch, eta_pitch, h);
