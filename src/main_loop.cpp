@@ -220,7 +220,6 @@ void flight_mode(void) {
     float delta_yaw   = StampFly.pid.yaw.update(
         yaw_rate_error, 
         StampFly.times.interval_time);
-        StampFly.times.interval_time);
 
     //トリム調整（機体のアンバランスをキャンセルするためトリム値を加算）
     float trim_roll  = 0.01;
