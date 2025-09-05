@@ -148,7 +148,7 @@ void make_telemetry_data(uint8_t* senddata) {
     data_set(senddata, StampFly.sensor.accz, &index);                   // 11 accz
     data_set(senddata, StampFly.ref.roll, &index);                      // 12 Roll_ref
     data_set(senddata, StampFly.ref.pitch, &index);                     // 13 Pitch_ref
-    data_set(senddata, StampFly.ref.yaw, &index);                       // 14 Yaw_ref
+    data_set(senddata, StampFly.ref.throttle, &index);                  // 14 Yaw_ref
 }
 
 void data_set(uint8_t* datalist, float value, uint8_t* index) {
