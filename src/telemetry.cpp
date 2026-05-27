@@ -75,7 +75,7 @@ void telemetry_sequence(void) {
         case 1:
             make_telemetry_data(senddata);
             // Send !
-            if (telemetry_send(&peerInfo[TELEM], senddata, sizeof(senddata)) == 1){
+            if (telemetry_send(senddata, sizeof(senddata)) == 1){
                 esp_led(0x330000, 1);  // Telemetory Reciver OFF
                 //USBSerial.printf("NG Mode=%d\n\r", StampFly.flag.mode);
             }
