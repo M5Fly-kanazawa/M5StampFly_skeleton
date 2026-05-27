@@ -39,38 +39,79 @@ volatile uint16_t Connect_flag = 0;
 // 4C:75:25:AF:4E:84
 // 4C:75:25:AD:8B:20
 // 4C:75:25:AD:8B:20 赤水玉テープ　ATOM lite
-uint8_t JoyAddr[6] = {0};
-uint8_t TelemAddr[6] = {0x4C, 0x75, 0x25, 0xAD, 0x8B, 0x20};
+uint8_t TelemAddr[6] = {0};
+// uint8_t TelemAddr[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
 volatile uint8_t MyMacAddr[6];
 volatile uint8_t peer_command[4] = {0xaa, 0x55, 0x16, 0x88};
 volatile uint8_t Rc_err_flag     = 0;
-esp_now_peer_info_t peerInfo[2];
-esp_now_send_status_t esp_now_send_status;
-volatile uint8_t SendAddress[6];
-
+esp_now_peer_info_t peerInfo;
 
 // RC
 volatile float Stick[16];
 volatile uint8_t Recv_MAC[3];
 
+// ahrs_reset_flag は受信した姿勢リセット指令を保持する
+// ahrs_reset_flag holds the AHRS reset command received from the controller
+// (skeleton firmware では未参照だが、新プロトコルに合わせて保持しておく)
+// (Unused in the skeleton firmware, but kept for protocol compatibility)
+static uint8_t ahrs_reset_flag = 0;
+
 void on_esp_now_sent(const uint8_t *mac_addr, esp_now_send_status_t status);
 
-// 受信コールバック
+// 受信コールバック / Receive callback
+//
+// 制御パケットは2系統のコントローラを自動判定でサポート:
+// Auto-detect controller protocol by packet length, supporting two variants:
+//
+//   [新] stampfly_ecosystem コントローラ: 14 バイト
+//   [NEW] stampfly_ecosystem controller: 14 bytes
+//     Byte  0-2 : ドローン MAC 下位3バイト
+//     Byte  3-4 : Throttle (uint16 LE, 0-4095, center 2048, self-centering stick)
+//     Byte  5-6 : Roll/phi  (uint16 LE, 0-4095, center 2048)
+//     Byte  7-8 : Pitch/theta (uint16 LE, 0-4095, center 2048)
+//     Byte  9-10: Yaw/psi   (uint16 LE, 0-4095, center 2048)
+//     Byte 11   : flags (bit0=Arm, bit1=Flip, bit2=Mode, bit3=AltMode, bit4=PosMode)
+//     Byte 12   : reserved (proactive_flag) -> ahrs_reset_flag
+//     Byte 13   : checksum = sum(bytes 0-12)
+//
+//   [旧] M5StampFly_Controller (legacy): 25 バイト
+//   [LEGACY] M5StampFly_Controller: 25 bytes
+//     Byte  0-2 : ドローン MAC 下位3バイト
+//     Byte  3-6 : float32 Rudder
+//     Byte  7-10: float32 Throttle
+//     Byte 11-14: float32 Aileron
+//     Byte 15-18: float32 Elevator
+//     Byte 19   : BUTTON_ARM
+//     Byte 20   : BUTTON_FLIP
+//     Byte 21   : CONTROLMODE   (0=ANGLE, 1=RATE)
+//     Byte 22   : ALTCONTROLMODE (4=AUTO_ALT, 5=MANUAL_ALT)
+//     Byte 23   : ahrs_reset_flag
+//     Byte 24   : checksum = sum(bytes 0-23)
+//
+// 2バイトのビーコン (0xBE 0xAC) はTDMA同期用で、ドローン側では無視
+// 2-byte beacons (0xBE 0xAC) are for TDMA master sync, ignored on drone side
 void OnDataRecv(const uint8_t *mac_addr, const uint8_t *recv_data, int data_len) {
+    // ビーコンパケットは無視 / Ignore beacon packets
+    if (data_len == 2 && recv_data[0] == 0xBE && recv_data[1] == 0xAC) {
+        return;
+    }
+
+    // パケット長で旧/新を判定 / Detect protocol by length
+    if (data_len != 14 && data_len != 25) {
+        Rc_err_flag = 1;
+        return;
+    }
+
     Connect_flag = 0;
 
-    uint8_t *d_int;
-    // int16_t d_short;
-    float d_float;
-
-    if (!JoyAddr[0] && !JoyAddr[1] && !JoyAddr[2] && !JoyAddr[3] && !JoyAddr[4] && !JoyAddr[5]) {
-        memcpy(JoyAddr, mac_addr, 6);
-        memcpy((void*)peerInfo[JOY].peer_addr, JoyAddr, 6);
-        peerInfo[JOY].channel = CHANNEL;
-        peerInfo[JOY].encrypt = false;
-        if (esp_now_add_peer(&peerInfo[JOY]) != ESP_OK) {
+    if (!TelemAddr[0] && !TelemAddr[1] && !TelemAddr[2] && !TelemAddr[3] && !TelemAddr[4] && !TelemAddr[5]) {
+        memcpy(TelemAddr, mac_addr, 6);
+        memcpy(peerInfo.peer_addr, TelemAddr, 6);
+        peerInfo.channel = CHANNEL;
+        peerInfo.encrypt = false;
+        if (esp_now_add_peer(&peerInfo) != ESP_OK) {
             USBSerial.println("Failed to add peer2");
-            memset(JoyAddr, 0, 6);
+            memset(TelemAddr, 0, 6);
         } else {
             esp_now_register_send_cb(on_esp_now_sent);
         }
@@ -80,6 +121,7 @@ void OnDataRecv(const uint8_t *mac_addr, const uint8_t *recv_data, int data_len)
     Recv_MAC[1] = recv_data[1];
     Recv_MAC[2] = recv_data[2];
 
+    // 自分宛か確認 / Confirm packet is addressed to us
     if ((recv_data[0] == MyMacAddr[3]) && (recv_data[1] == MyMacAddr[4]) && (recv_data[2] == MyMacAddr[5])) {
         Rc_err_flag = 0;
     } else {
@@ -87,76 +129,92 @@ void OnDataRecv(const uint8_t *mac_addr, const uint8_t *recv_data, int data_len)
         return;
     }
 
-    // checksum
-    uint8_t check_sum = 0;
-    for (uint8_t i = 0; i < 24; i++) check_sum = check_sum + recv_data[i];
-    // if (check_sum!=recv_data[23])USBSerial.printf("checksum=%03d recv_sum=%03d\n\r", check_sum, recv_data[23]);
-    if (check_sum != recv_data[24]) {
-        Rc_err_flag = 1;
-        return;
+    if (data_len == 14) {
+        // ====== 新プロトコル (stampfly_ecosystem) / New protocol ======
+        // checksum: sum(bytes 0-12) == byte 13
+        uint8_t check_sum = 0;
+        for (uint8_t i = 0; i < 13; i++) check_sum += recv_data[i];
+        if (check_sum != recv_data[13]) {
+            Rc_err_flag = 1;
+            return;
+        }
+
+        uint16_t throttle_raw = (uint16_t)recv_data[3] | ((uint16_t)recv_data[4] << 8);
+        uint16_t roll_raw     = (uint16_t)recv_data[5] | ((uint16_t)recv_data[6] << 8);
+        uint16_t pitch_raw    = (uint16_t)recv_data[7] | ((uint16_t)recv_data[8] << 8);
+        uint16_t yaw_raw      = (uint16_t)recv_data[9] | ((uint16_t)recv_data[10] << 8);
+        uint8_t  flags        = recv_data[11];
+
+        // AtomS3 Joy はセルフセンタリングのため、全軸 center 2048 -> 0 にマップ
+        // AtomS3 Joy sticks self-center, so map center 2048 -> 0 for all axes
+        Stick[THROTTLE] = ((float)throttle_raw - 2048.0f) / 2048.0f;
+        Stick[AILERON]  = ((float)roll_raw     - 2048.0f) / 2048.0f;
+        Stick[ELEVATOR] = ((float)pitch_raw    - 2048.0f) / 2048.0f;
+        Stick[RUDDER]   = ((float)yaw_raw      - 2048.0f) / 2048.0f;
+
+        Stick[BUTTON_ARM]  = (flags & 0x01) ? 1.0f : 0.0f;
+        Stick[BUTTON_FLIP] = (flags & 0x02) ? 1.0f : 0.0f;
+        Stick[CONTROLMODE] = (flags & 0x04) ? 1.0f : 0.0f;  // 0=ANGLE, 1=RATE
+
+        // AltMode (bit3) -> AUTO_ALT(4) / MANUAL_ALT(5)
+        // PosMode (bit4) はドローン側未実装のため AltMode と同じく AUTO_ALT 扱い
+        // PosMode (bit4) is not implemented on drone side; treated like AltMode
+        Stick[ALTCONTROLMODE] = (flags & 0x08) ? (float)AUTO_ALT : (float)MANUAL_ALT;
+
+        ahrs_reset_flag = recv_data[12];
+    } else {
+        // ====== 旧プロトコル (M5StampFly_Controller) / Legacy protocol ======
+        // checksum: sum(bytes 0-23) == byte 24
+        uint8_t check_sum = 0;
+        for (uint8_t i = 0; i < 24; i++) check_sum += recv_data[i];
+        if (check_sum != recv_data[24]) {
+            Rc_err_flag = 1;
+            return;
+        }
+
+        uint8_t *d_int;
+        float d_float;
+
+        d_int    = (uint8_t *)&d_float;
+        d_int[0] = recv_data[3];
+        d_int[1] = recv_data[4];
+        d_int[2] = recv_data[5];
+        d_int[3] = recv_data[6];
+        Stick[RUDDER] = d_float;
+
+        d_int[0] = recv_data[7];
+        d_int[1] = recv_data[8];
+        d_int[2] = recv_data[9];
+        d_int[3] = recv_data[10];
+        Stick[THROTTLE] = d_float;
+
+        d_int[0] = recv_data[11];
+        d_int[1] = recv_data[12];
+        d_int[2] = recv_data[13];
+        d_int[3] = recv_data[14];
+        Stick[AILERON] = d_float;
+
+        d_int[0] = recv_data[15];
+        d_int[1] = recv_data[16];
+        d_int[2] = recv_data[17];
+        d_int[3] = recv_data[18];
+        Stick[ELEVATOR] = d_float;
+
+        Stick[BUTTON_ARM]     = recv_data[19];
+        Stick[BUTTON_FLIP]    = recv_data[20];
+        Stick[CONTROLMODE]    = recv_data[21];
+        Stick[ALTCONTROLMODE] = recv_data[22];
+
+        ahrs_reset_flag = recv_data[23];
     }
 
-    d_int         = (uint8_t *)&d_float;
-    d_int[0]      = recv_data[3];
-    d_int[1]      = recv_data[4];
-    d_int[2]      = recv_data[5];
-    d_int[3]      = recv_data[6];
-    Stick[RUDDER] = d_float;
-
-    d_int[0]        = recv_data[7];
-    d_int[1]        = recv_data[8];
-    d_int[2]        = recv_data[9];
-    d_int[3]        = recv_data[10];
-    Stick[THROTTLE] = d_float;
-
-    d_int[0]       = recv_data[11];
-    d_int[1]       = recv_data[12];
-    d_int[2]       = recv_data[13];
-    d_int[3]       = recv_data[14];
-    Stick[AILERON] = d_float;
-
-    d_int[0]        = recv_data[15];
-    d_int[1]        = recv_data[16];
-    d_int[2]        = recv_data[17];
-    d_int[3]        = recv_data[18];
-    Stick[ELEVATOR] = d_float;
-
-    Stick[BUTTON_ARM]     = recv_data[19];//auto_up_down_status
-    Stick[BUTTON_FLIP]    = recv_data[20];
-    Stick[CONTROLMODE]    = recv_data[21];//Mode:rate or angle control
-    Stick[ALTCONTROLMODE] = recv_data[22];//高度制御
-
-    uint8_t ahrs_reset_flag = recv_data[23];
-
-    Stick[LOG] = 0.0;
-    // if (check_sum!=recv_data[23])USBSerial.printf("checksum=%03d recv_sum=%03d\n\r", check_sum, recv_data[23]);
-
-#if 0
-  USBSerial.printf("%6.3f %6.3f %6.3f %6.3f %6.3f %6.3f %6.3f %6.3f  %6.3f\n\r", 
-                                            Stick[THROTTLE],
-                                            Stick[AILERON],
-                                            Stick[ELEVATOR],
-                                            Stick[RUDDER],
-                                            Stick[BUTTON_ARM],
-                                            Stick[BUTTON_FLIP],
-                                            Stick[CONTROLMODE],
-                                            Stick[ALTCONTROLMODE],
-                                            Stick[LOG]);
-#endif
+    Stick[LOG] = 0.0f;
 }
 
-// 送信コールバック
+// 送信コールバック / Send callback
+uint8_t esp_now_send_status;
 void on_esp_now_sent(const uint8_t *mac_addr, esp_now_send_status_t status) {
     esp_now_send_status = status;
-    memcpy((void*)SendAddress, mac_addr, 6);
-    #if 0
-    if (status == ESP_NOW_SEND_SUCCESS)
-        USBSerial.printf("MAC ADDRES %02X:%02X:%02X:%02X:%02X:%02X ESP_NOW_SEND_SUCCESS!\n\r", 
-            mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
-    else
-        USBSerial.printf("MAC ADDRES %02X:%02X:%02X:%02X:%02X:%02X ESP_NOW_SEND_FAIL!\n\r", 
-            mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
-    #endif
 }
 
 void rc_init(void) {
@@ -180,10 +238,10 @@ void rc_init(void) {
 
     // MACアドレスブロードキャスト
     uint8_t addr[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-    memcpy((void*)peerInfo[JOY].peer_addr, addr, 6);
-    peerInfo[JOY].channel = CHANNEL;
-    peerInfo[JOY].encrypt = false;
-    if (esp_now_add_peer(&peerInfo[JOY]) != ESP_OK) {
+    memcpy(peerInfo.peer_addr, addr, 6);
+    peerInfo.channel = CHANNEL;
+    peerInfo.encrypt = false;
+    if (esp_now_add_peer(&peerInfo) != ESP_OK) {
         USBSerial.println("Failed to add peer");
         return;
     }
@@ -206,17 +264,6 @@ void rc_init(void) {
         ESP.restart();
     }
 
-    //テレメトリーM5ATOMとペアリング
-    memcpy((void*)peerInfo[TELEM].peer_addr, TelemAddr, 6);
-    peerInfo[TELEM].channel = CHANNEL;
-    peerInfo[TELEM].encrypt = false;
-    if (esp_now_add_peer(&peerInfo[TELEM]) != ESP_OK) 
-    {
-            USBSerial.println("Failed to telemetry add peer2");
-    }
-    else USBSerial.printf("Telemetry peering Sucess!\n\r");
-    esp_now_register_send_cb(on_esp_now_sent);
-
     // ESP-NOWコールバック登録
     esp_now_register_recv_cb(OnDataRecv);
     USBSerial.println("ESP-NOW Ready.");
@@ -227,10 +274,10 @@ void send_peer_info(void) {
     data[0] = CHANNEL;
     memcpy(&data[1], (uint8_t *)MyMacAddr, 6);
     memcpy(&data[1 + 6], (uint8_t *)peer_command, 4);
-    esp_now_send(peerInfo[JOY].peer_addr, data, 11);
+    esp_now_send(peerInfo.peer_addr, data, 11);
 }
 
-uint8_t telemetry_send(esp_now_peer_info_t* peerInfo, uint8_t *data, uint16_t datalen) {
+uint8_t telemetry_send(uint8_t *data, uint16_t datalen) {
     static uint32_t cnt       = 0;
     static uint8_t error_flag = 0;
     static uint8_t state      = 0;
@@ -238,13 +285,12 @@ uint8_t telemetry_send(esp_now_peer_info_t* peerInfo, uint8_t *data, uint16_t da
     esp_err_t result;
 
     if ((error_flag == 0) && (state == 0)) {
-        result = esp_now_send(peerInfo->peer_addr, data, datalen);
+        result = esp_now_send(peerInfo.peer_addr, data, datalen);
         cnt    = 0;
-        //USBSerial.printf("%d\n\r", result);
     } else
         cnt++;
 
-    if (esp_now_send_status == ESP_NOW_SEND_SUCCESS) {
+    if (esp_now_send_status == 0) {
         error_flag = 0;
         // state = 0;
     } else {
@@ -257,7 +303,7 @@ uint8_t telemetry_send(esp_now_peer_info_t* peerInfo, uint8_t *data, uint16_t da
         cnt        = 0;
     }
     cnt++;
-    //USBSerial.printf("%6d %d %d\r\n", cnt, error_flag, esp_now_send_status);
+    // USBSerial.printf("%6d %d %d\r\n", cnt, error_flag, esp_now_send_status);
 
     return error_flag;
 }

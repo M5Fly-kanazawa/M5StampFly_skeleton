@@ -28,6 +28,8 @@
 
 #include <FastLED.h>
 #include <stdint.h>
+#include "rc.hpp"
+#include "stampfly.hpp"
 
 #define WHITE         0xffffff
 #define BLUE          0x0000ff

@@ -2,6 +2,7 @@
 #define STAMPFLY_HPP
 
 #include <stdint.h>
+#include "pid.hpp"
 
 //Mode
 #define INIT_MODE       0
@@ -32,6 +33,20 @@ typedef struct{
 }sensor_value_t;
 
 typedef struct{
+	float roll;
+	float pitch;
+	float yaw;
+	float throttle;
+}control_ref_t;
+
+typedef struct{
+    PID thrust;
+    PID roll;
+    PID pitch;
+    PID yaw;    
+}pidstruct_t;
+
+typedef struct{
     volatile uint8_t mode=0;
     volatile uint8_t oldmode=0;
     volatile uint8_t loop=0;
@@ -54,9 +69,11 @@ typedef struct{
     sensor_value_t sensor;
     flag_t flag;
     counter_t counter;
+    pidstruct_t pid;
+    control_ref_t ref;
     times_t times;
 }stampfly_t;
-
+ 
 extern stampfly_t StampFly;
-
+ 
 #endif

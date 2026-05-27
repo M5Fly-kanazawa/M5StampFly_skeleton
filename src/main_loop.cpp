@@ -99,6 +99,7 @@ void init_copter(void) {
     led_init();
     // Initialize Serial communication
     USBSerial.begin(115200);
+    USBSerial.setTxTimeoutMs(0);
     delay(1500);
     USBSerial.printf("Start StampFly! Skeleton\r\n");
     motor_init();
@@ -117,7 +118,6 @@ void init_copter(void) {
     timerAttachInterrupt(timer, &onTimer, true);
     timerAlarmWrite(timer, 2500, true);
     timerAlarmEnable(timer);
-
 }
 
 //loop400Hzの更新関数
@@ -188,12 +188,14 @@ void flight_mode(void) {
     // Set LED Color
     onboard_led1(YELLOW, 1);
     onboard_led2(YELLOW, 1);
-    float throttle_delta = limit(Stick[THROTTLE], 0.0, 0.9);
+    StampFly.ref.throttle = limit(Stick[THROTTLE], 0.0, 0.9);
 
-    motor_set_duty_fl(throttle_delta);
-    motor_set_duty_fr(throttle_delta);
-    motor_set_duty_rl(throttle_delta);
-    motor_set_duty_rr(throttle_delta);
+    motor_set_duty_fl(StampFly.ref.throttle);
+    motor_set_duty_fr(StampFly.ref.throttle);
+    motor_set_duty_rl(StampFly.ref.throttle);
+    motor_set_duty_rr(StampFly.ref.throttle);
+
+    //Arm（スロットル）ボタンを監視して押されたらParkingモードに復帰するためのコード
     if (armButtonPressedAndRerleased)StampFly.flag.mode = PARKING_MODE;
     armButtonPressedAndRerleased = 0;
 }
@@ -203,6 +205,8 @@ void parking_mode(void) {
     // Set LED Color
     onboard_led1(GREEN, 1);
     onboard_led2(GREEN, 1);
+
+    StampFly.counter.loop = 0;
     
     motor_stop();
     if (armButtonPressedAndRerleased)StampFly.flag.mode = FLIGHT_MODE;

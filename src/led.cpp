@@ -24,7 +24,6 @@
  */
 
 #include "led.hpp"
-#include "rc.hpp"
 
 uint32_t Led_color       = 0x000000;
 uint32_t Led_color2      = 255;
@@ -52,6 +51,10 @@ void led_init(void) {
 
 void led_show(void) {
     uint8_t bright = 8;
+    if (  StampFly.sensor.voltage > 0.7 && StampFly.sensor.voltage < POWER_LIMIT) {
+        onboard_led1(POWEROFFCOLOR, 1);
+        onboard_led2(POWEROFFCOLOR, 1);
+    }
     FastLED.show(bright);
 }
 
